@@ -227,6 +227,22 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             }
             for r in rules
         ]
+        if not conflicts:
+            # No cross-medication rules were involved -- infeasibility comes
+            # from one or more medications' own constraints (e.g. a food
+            # requirement that can't fit inside the allowed window, or
+            # doses_per_day * min_spacing exceeding the window). Surface
+            # which medications so the caregiver isn't staring at nothing.
+            med_names = ", ".join(m["name"] for m in medications)
+            conflicts = [{
+                "med_a": None,
+                "med_b": None,
+                "message": (
+                    f"Couldn't fit a valid time for: {med_names}. Check that "
+                    f"each medication's allowed window is wide enough for its "
+                    f"frequency, dose count, and food requirement."
+                ),
+            }]
         return {"feasible": False, "doses": [], "conflicts": conflicts}
 
     med_lookup = {m["id"]: m["name"] for m in medications}
