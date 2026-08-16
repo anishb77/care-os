@@ -50,6 +50,17 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
                  this way; multi-dose-per-day medications skip stability (edge
                  case, acceptable for MVP).
 
+    IMPORTANT -- relative-time model: every clock time in this function
+    (window bounds, exact/preferred times, meal times, fixed/previous
+    doses) is converted into "minutes since this person's wake time"
+    before being handed to the solver, and converted back to a normal
+    clock time on the way out. This lets a bedtime that falls after
+    midnight (e.g. wake 8:00 AM, sleep 1:00 AM the next day) work as one
+    continuous awake window instead of being mathematically impossible --
+    absolute clock time alone can't express "8:00 AM to 1:00 AM" as a
+    single increasing range, since 1:00 AM (60) is numerically less than
+    8:00 AM (480).
+
     Returns: {feasible: bool, doses: [...], conflicts: [...]}
     """
     fixed_doses = fixed_doses or []
@@ -58,9 +69,39 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
     for fd in fixed_doses:
         fixed_by_med.setdefault(fd["medication_id"], []).append(fd["actual_time_min"])
 
+    wake_min = person["wake_time_min"]
+    sleep_min = person["sleep_time_min"]
+
+    def to_relative_minutes(abs_min: int) -> int:
+        """
+        Clock time -> minutes since wake, wrapping across midnight. If
+        abs_min is at/after wake_min it's simply abs_min - wake_min; if
+        it's "earlier" in raw clock terms (e.g. sleep_min = 1:00 AM = 60
+        while wake_min = 8:00 AM = 480), the modulo pushes it past
+        midnight into the next day's relative timeline instead.
+        """
+        return (abs_min - wake_min) % DAY_MINUTES
+
+    def to_relative_slot(abs_min: int) -> int:
+        return _slot(to_relative_minutes(abs_min))
+
+    def from_relative_minutes(rel_min: int) -> int:
+        """Inverse of to_relative_minutes -- back to a normal clock time."""
+        return (wake_min + rel_min) % DAY_MINUTES
+
     model = cp_model.CpModel()
-    wake_slot = _slot(person["wake_time_min"])
-    sleep_slot = _slot(person["sleep_time_min"])
+    wake_slot = 0  # by definition, relative to itself
+    sleep_slot = to_relative_slot(sleep_min)  # length of the awake window, in slots
+
+    if sleep_slot <= wake_slot:
+        # Wake and sleep resolve to the same instant -- zero-length day.
+        # Nothing is schedulable; every medication is a conflict.
+        conflicts = [{
+            "med_a": None,
+            "med_b": None,
+            "message": "This person's wake and sleep times leave no time awake to schedule anything.",
+        }]
+        return {"feasible": False, "doses": [], "conflicts": conflicts}
 
     dose_vars: dict[str, list[cp_model.IntVar]] = {}
     deviation_terms = []    # "closer to preferred time" -- weight 1
@@ -89,8 +130,8 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             window_start = wake_slot
             window_end = sleep_slot
         else:
-            window_start = max(wake_slot, _slot(med.get("window_start_min", person["wake_time_min"])))
-            window_end = min(sleep_slot, _slot(med.get("window_end_min", person["sleep_time_min"])))
+            window_start = max(wake_slot, to_relative_slot(med.get("window_start_min", wake_min)))
+            window_end = min(sleep_slot, to_relative_slot(med.get("window_end_min", sleep_min)))
             if window_end <= window_start:
                 window_end = min(sleep_slot, window_start + 12)  # fallback: ~1 hour
 
@@ -102,7 +143,7 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
 
         # --- Frequency-type-specific hard constraints ---
         if med["frequency_type"] == "exact" and med.get("exact_time_min") is not None:
-            model.Add(doses[0] == _slot(med["exact_time_min"]))
+            model.Add(doses[0] == to_relative_slot(med["exact_time_min"]))
 
         elif med["frequency_type"] == "every_n_hours" and med.get("interval_hours"):
             gap = round((med["interval_hours"] * 60) / SLOT_MINUTES)
@@ -120,7 +161,7 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
 
         # --- Preferred time: soft objective term, not a hard constraint ---
         if med["frequency_type"] == "preferred" and med.get("preferred_time_min") is not None:
-            target = _slot(med["preferred_time_min"])
+            target = to_relative_slot(med["preferred_time_min"])
             dev = model.NewIntVar(0, SLOTS_PER_DAY, f"{med_id}_dev")
             model.AddAbsEquality(dev, doses[0] - target)
             deviation_terms.append(dev)
@@ -132,7 +173,7 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
         if (n_doses == 1
                 and med["frequency_type"] != "exact"
                 and med_id in previous_times):
-            prev_slot = _slot(previous_times[med_id])
+            prev_slot = to_relative_slot(previous_times[med_id])
             stab = model.NewIntVar(0, SLOTS_PER_DAY, f"{med_id}_stab")
             model.AddAbsEquality(stab, doses[0] - prev_slot)
             stability_terms.append(stab)
@@ -144,7 +185,7 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             # Build an OR across meals: dose must land in range for AT LEAST one meal.
             meal_bools = []
             for meal_min in meals:
-                meal_slot = _slot(meal_min)
+                meal_slot = to_relative_slot(meal_min)
                 b = model.NewBoolVar(f"{med_id}_meal_{meal_slot}")
                 if food_req == "with":
                     lo, hi = meal_slot - 6, meal_slot + 6  # +-30 min
@@ -163,7 +204,7 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             if food_req == "without":
                 # Avoid a +-45min band around every meal entirely.
                 for meal_min in meals:
-                    meal_slot = _slot(meal_min)
+                    meal_slot = to_relative_slot(meal_min)
                     b_before = model.NewBoolVar(f"{med_id}_avoid_before_{meal_slot}")
                     b_after = model.NewBoolVar(f"{med_id}_avoid_after_{meal_slot}")
                     model.Add(doses[0] <= meal_slot - 9).OnlyEnforceIf(b_before)
@@ -185,7 +226,8 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             if med_id in fixed_by_med:
                 out = []
                 for i, actual_min in enumerate(fixed_by_med[med_id]):
-                    c = model.NewIntVar(_slot(actual_min), _slot(actual_min), f"fixed_{med_id}_{i}")
+                    rel_slot = to_relative_slot(actual_min)
+                    c = model.NewIntVar(rel_slot, rel_slot, f"fixed_{med_id}_{i}")
                     out.append(c)
                 return out
             return vlist
@@ -251,11 +293,12 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
         if vars_ is None:  # already taken today, skip -- caller already has it
             continue
         for v in vars_:
+            rel_minutes = _minutes(solver.Value(v))
             doses_out.append({
                 "medication_id": med_id,
                 "medication_name": med_lookup[med_id],
-                "scheduled_time_min": _minutes(solver.Value(v)),
+                "scheduled_time_min": from_relative_minutes(rel_minutes),
             })
-    doses_out.sort(key=lambda d: d["scheduled_time_min"])
+    doses_out.sort(key=lambda d: to_relative_minutes(d["scheduled_time_min"]))
 
     return {"feasible": True, "doses": doses_out, "conflicts": []}
