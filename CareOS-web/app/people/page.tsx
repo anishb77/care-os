@@ -1,55 +1,97 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import AddPersonForm from './add-person-form'
+import MedicationForm from './medication-form'
+import MedRuleForm from './med-rule-form'
+import DeleteMedicationButton from './delete-medication-button'
 
-export default async function PeoplePage() {
+export default async function PersonDetailPage({
+  params,
+}: {
+  params: Promise<{ personId: string }>
+}) {
+  const { personId } = await params
   const supabase = await createClient()
-  const { data: people, error } = await supabase
+
+  const { data: person } = await supabase
     .from('people')
     .select('*')
-    .order('created_at', { ascending: false })
+    .eq('id', personId)
+    .single()
 
-  if (error) return <p className="p-8 text-destructive">Error loading people: {error.message}</p>
+  const { data: medications } = await supabase
+    .from('medications')
+    .select('*')
+    .eq('person_id', personId)
+
+  const medIds = (medications ?? []).map((m) => m.id)
+  const { data: rules } = medIds.length
+    ? await supabase.from('med_rules').select('*').in('med_a_id', medIds)
+    : { data: [] }
+
+  const medNameById = Object.fromEntries((medications ?? []).map((m) => [m.id, m.name]))
+
+  if (!person) return <p className="p-8 text-muted-foreground">Person not found.</p>
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
       <div>
-        <h1 className="text-3xl font-semibold text-foreground tracking-tight">People</h1>
-        <p className="text-muted-foreground mt-1">
-          Manage the people you care for and their medications.
-        </p>
+        <h1 className="text-3xl font-semibold text-foreground tracking-tight">{person.name}</h1>
+        <Link
+          href={`/today/${personId}`}
+          className="inline-block mt-3 careos-button"
+        >
+          View Today's Schedule →
+        </Link>
       </div>
 
       <div className="careos-card p-6">
-        <h2 className="text-lg font-semibold mb-4">Your People</h2>
-        {people && people.length > 0 ? (
-          <ul className="space-y-3 mb-2">
-            {people.map((p) => (
+        <h2 className="text-lg font-semibold mb-4">Medications</h2>
+        {medications && medications.length > 0 ? (
+          <ul className="space-y-2 mb-6">
+            {medications.map((m) => (
               <li
-                key={p.id}
-                className="flex items-center justify-between px-4 py-4 rounded-2xl bg-secondary"
+                key={m.id}
+                className="flex items-center justify-between px-4 py-3 rounded-2xl bg-secondary"
               >
-                <Link
-                  href={`/people/${p.id}`}
-                  className="font-medium text-foreground hover:text-primary transition-colors"
-                >
-                  {p.name}
-                </Link>
-                <Link
-                  href={`/today/${p.id}`}
-                  className="careos-button-secondary text-sm"
-                >
-                  Today's Schedule
-                </Link>
+                <span className="font-medium">{m.name}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">
+                    {m.frequency_type.replace('_', ' ')}
+                  </span>
+                  <DeleteMedicationButton medicationId={m.id} personId={personId} />
+                </div>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-muted-foreground">No one added yet — add someone below.</p>
+          <p className="text-muted-foreground mb-6">No medications yet.</p>
         )}
+        <MedicationForm personId={personId} />
       </div>
 
-      <AddPersonForm />
+      <div className="careos-card p-6">
+        <h2 className="text-lg font-semibold mb-4">Rules Between Medications</h2>
+        {rules && rules.length > 0 ? (
+          <ul className="space-y-2 mb-6">
+            {rules.map((r) => (
+              <li
+                key={r.id}
+                className="px-4 py-3 rounded-2xl bg-secondary text-sm"
+              >
+                <span className="font-medium">{medNameById[r.med_a_id]}</span>
+                {' — '}
+                {r.rule_type.replace('_', ' ')}
+                {' — '}
+                <span className="font-medium">{medNameById[r.med_b_id]}</span>
+                {r.min_gap_hours ? ` (${r.min_gap_hours}h)` : ''}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground mb-6">No rules yet.</p>
+        )}
+        <MedRuleForm personId={personId} medications={medications ?? []} />
+      </div>
     </div>
   )
-} 
+}
