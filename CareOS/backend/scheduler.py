@@ -1,38 +1,3 @@
-"""
-Pill Pilot scheduling engine.
-
-Generates a day's dose times for one person's medications, respecting:
-  - exact / preferred / window / n_per_day / every_n_hours frequency types
-  - min/max spacing between a medication's own doses
-  - food timing relative to that person's meal times
-  - wake/sleep boundaries
-  - caregiver-defined before/after ordering and min-separation rules
-    between two different medications
-
-Priority (per spec section 5), enforced in this order:
-  1. Hard rules (windows, ordering, exact times, spacing) -- never violated.
-  2. Minimize conflicts/deviations, INCLUDING staying close to a medication's
-     previous scheduled time when recalculating -- per spec section 5,
-     "Prefer the smallest reasonable changes." Weighted more heavily than
-     preferred-time closeness so a recalculation doesn't jump a dose
-     somewhere new just because it's technically valid.
-  3. Fewer medication-taking events when allowed (not fully implemented in
-     the MVP -- noted as a possible Day-2 stretch goal).
-  4. Times close to the user's preferred times.
-
-If a fully valid schedule doesn't exist, we report infeasibility and WHICH
-rules are in tension, rather than silently dropping a rule. Per spec
-section 5: "If no completely valid schedule exists, show the problem
-instead of silently changing the user's rules."
-
-IMPORTANT (spec section 9 / "Do NOT build"): this engine only ever
-processes rules the caregiver entered. It never infers, checks, or
-invents medical compatibility between medications.
-
-Time is minutes-from-midnight throughout, discretized to 5-minute slots
-for the solver (fine enough for real scheduling, coarse enough to solve
-fast).
-"""
 from ortools.sat.python import cp_model
 
 SLOT_MINUTES = 5
@@ -112,10 +77,22 @@ def generate_schedule(person: dict, medications: list[dict], rules: list[dict],
             continue
 
         n_doses = med.get("doses_per_day", 1)
-        window_start = max(wake_slot, _slot(med.get("window_start_min", person["wake_time_min"])))
-        window_end = min(sleep_slot, _slot(med.get("window_end_min", person["sleep_time_min"])))
-        if window_end <= window_start:
-            window_end = min(sleep_slot, window_start + 12)  # fallback: ~1 hour
+
+        # 'exact' medications aren't bounded by window_start_min/window_end_min at
+        # all -- that field is only meaningful for window/n_per_day/every_n_hours
+        # and is hidden in the UI for 'exact', but the form still sends its
+        # leftover default value. Using it here would silently clamp the dose
+        # variable's domain and make ANY exact time outside that default
+        # (e.g. a bedtime or early-morning medication) mathematically
+        # infeasible, regardless of any caregiver rules.
+        if med["frequency_type"] == "exact":
+            window_start = wake_slot
+            window_end = sleep_slot
+        else:
+            window_start = max(wake_slot, _slot(med.get("window_start_min", person["wake_time_min"])))
+            window_end = min(sleep_slot, _slot(med.get("window_end_min", person["sleep_time_min"])))
+            if window_end <= window_start:
+                window_end = min(sleep_slot, window_start + 12)  # fallback: ~1 hour
 
         doses = []
         for i in range(n_doses):

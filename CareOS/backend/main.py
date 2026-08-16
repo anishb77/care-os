@@ -1,21 +1,3 @@
-"""
-Pill Pilot backend.
-
-Two responsibilities:
-  1. Generate today's schedule for a person (POST /schedule/generate).
-  2. Handle the dynamic loop: mark a dose taken/missed, then recalculate
-     the REMAINING doses for that day around what actually happened
-     (POST /doses/{id}/taken, POST /doses/{id}/missed).
-
-Per spec section 9, this service never evaluates medical compatibility,
-never invents interactions, and never recommends dosage changes -- it
-only arranges caregiver-provided rules into a schedule.
-
-Plain CRUD (add/edit people, medications, rules) is expected to happen
-directly from Next.js against Supabase -- it doesn't need to touch this
-backend at all. This backend is specifically the Scheduling Engine
-surface, per the architecture in spec section 10.
-"""
 import os
 from datetime import date, datetime, timedelta
 from fastapi import FastAPI, HTTPException

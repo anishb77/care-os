@@ -1,5 +1,3 @@
-"""Pydantic request/response models, matching the spec's core data model:
-Person, Medication, Dose. A Medication is rules; a Dose is one event."""
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
