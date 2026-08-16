@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import MedicationForm from './medication-form'
 import MedRuleForm from './med-rule-form'
+import DeleteMedicationButton from './delete-medication-button'
 
 export default async function PersonDetailPage({
   params,
@@ -53,9 +54,12 @@ export default async function PersonDetailPage({
                 className="flex items-center justify-between px-4 py-3 rounded-2xl bg-secondary"
               >
                 <span className="font-medium">{m.name}</span>
-                <span className="text-sm text-muted-foreground">
-                  {m.frequency_type.replace('_', ' ')}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-muted-foreground">
+                    {m.frequency_type.replace('_', ' ')}
+                  </span>
+                  <DeleteMedicationButton medicationId={m.id} personId={personId} />
+                </div>
               </li>
             ))}
           </ul>
