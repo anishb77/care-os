@@ -31,12 +31,26 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function timeToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60).toString().padStart(2, '0')
+  const m = (mins % 60).toString().padStart(2, '0')
+  return `${h}:${m}`
+}
+
 export default function MedicationForm({ personId }: { personId: string }) {
   const [name, setName] = useState('')
   const [frequencyType, setFrequencyType] = useState<FrequencyType>('window')
   const [dosesPerDay, setDosesPerDay] = useState(1)
-  const [windowStart, setWindowStart] = useState(420)  // 7:00 AM
-  const [windowEnd, setWindowEnd] = useState(1260)      // 9:00 PM
+  const [intervalHours, setIntervalHours] = useState(8)
+  const [exactTime, setExactTime] = useState('08:00')
+  const [preferredTime, setPreferredTime] = useState('08:00')
+  const [windowStart, setWindowStart] = useState('07:00')  // 7:00 AM
+  const [windowEnd, setWindowEnd] = useState('21:00')      // 9:00 PM
   const [foodRequirement, setFoodRequirement] = useState('none')
 
   const [startDate, setStartDate] = useState(todayISO())
@@ -82,8 +96,11 @@ export default function MedicationForm({ personId }: { personId: string }) {
       name,
       frequency_type: frequencyType,
       doses_per_day: dosesPerDay,
-      window_start_min: windowStart,
-      window_end_min: windowEnd,
+      interval_hours: frequencyType === 'every_n_hours' ? intervalHours : null,
+      exact_time_min: frequencyType === 'exact' ? timeToMinutes(exactTime) : null,
+      preferred_time_min: frequencyType === 'preferred' ? timeToMinutes(preferredTime) : null,
+      window_start_min: timeToMinutes(windowStart),
+      window_end_min: timeToMinutes(windowEnd),
       food_requirement: foodRequirement,
       start_date: startDate,
       end_date: isOngoing ? null : (endDate || null),
@@ -135,18 +152,134 @@ export default function MedicationForm({ personId }: { personId: string }) {
         </select>
       </label>
 
-      {(frequencyType === 'n_per_day' || frequencyType === 'every_n_hours') && (
+      {frequencyType === 'exact' && (
         <label className={labelClass}>
-          How many times per day?
+          Exact time
           <input
-            type="number"
-            min={1}
-            max={6}
-            value={dosesPerDay}
-            onChange={(e) => setDosesPerDay(Number(e.target.value))}
+            type="time"
+            value={exactTime}
+            onChange={(e) => setExactTime(e.target.value)}
             className={inputClass}
           />
         </label>
+      )}
+
+      {frequencyType === 'preferred' && (
+        <label className={labelClass}>
+          Preferred time
+          <input
+            type="time"
+            value={preferredTime}
+            onChange={(e) => setPreferredTime(e.target.value)}
+            className={inputClass}
+          />
+        </label>
+      )}
+
+      {frequencyType === 'window' && (
+        <div className="flex gap-3">
+          <label className={`${labelClass} flex-1`}>
+            Window start
+            <input
+              type="time"
+              value={windowStart}
+              onChange={(e) => setWindowStart(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className={`${labelClass} flex-1`}>
+            Window end
+            <input
+              type="time"
+              value={windowEnd}
+              onChange={(e) => setWindowEnd(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
+      )}
+
+      {frequencyType === 'n_per_day' && (
+        <>
+          <label className={labelClass}>
+            How many times per day?
+            <input
+              type="number"
+              min={1}
+              max={6}
+              value={dosesPerDay}
+              onChange={(e) => setDosesPerDay(Number(e.target.value))}
+              className={inputClass}
+            />
+          </label>
+          <div className="flex gap-3">
+            <label className={`${labelClass} flex-1`}>
+              Allowed window start
+              <input
+                type="time"
+                value={windowStart}
+                onChange={(e) => setWindowStart(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <label className={`${labelClass} flex-1`}>
+              Allowed window end
+              <input
+                type="time"
+                value={windowEnd}
+                onChange={(e) => setWindowEnd(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      {frequencyType === 'every_n_hours' && (
+        <>
+          <label className={labelClass}>
+            Every how many hours?
+            <input
+              type="number"
+              min={1}
+              max={24}
+              value={intervalHours}
+              onChange={(e) => setIntervalHours(Number(e.target.value))}
+              className={inputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            How many doses total per day?
+            <input
+              type="number"
+              min={1}
+              max={6}
+              value={dosesPerDay}
+              onChange={(e) => setDosesPerDay(Number(e.target.value))}
+              className={inputClass}
+            />
+          </label>
+          <div className="flex gap-3">
+            <label className={`${labelClass} flex-1`}>
+              Allowed window start
+              <input
+                type="time"
+                value={windowStart}
+                onChange={(e) => setWindowStart(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+            <label className={`${labelClass} flex-1`}>
+              Allowed window end
+              <input
+                type="time"
+                value={windowEnd}
+                onChange={(e) => setWindowEnd(e.target.value)}
+                className={inputClass}
+              />
+            </label>
+          </div>
+        </>
       )}
 
       <label className={labelClass}>
